@@ -101,6 +101,36 @@ if campaign_name and uploaded_file:
             non_converted_excel = BytesIO()
             non_converted_df.to_excel(non_converted_excel, index=False)
             st.download_button("📥 Download Non-Converted Customers", non_converted_excel.getvalue(), file_name="non_converted_customers.xlsx")
+        # 📍 Recommendations Section
+        with st.expander("📍 Next Steps Recommendations", expanded=True):
+            st.subheader("💡 Suggested Actions")
+
+            conversion_rate = (total_converted / total_targeted) * 100 if total_targeted > 0 else 0
+            promo_usage_rate = (total_promo_used / total_targeted) * 100 if total_targeted > 0 else 0
+
+            recommendations = []
+
+            if conversion_rate < 30:
+                recommendations.append("🔁 Consider retargeting non-converted customers with a stronger value proposition or reminder.")
+            else:
+                recommendations.append("✅ Good conversion rate. Consider scaling the campaign or repeating for similar segments.")
+
+            if promo_usage_rate < 15:
+                recommendations.append("💬 Low promo code usage — test different incentives or highlight them more clearly in your messages.")
+            elif promo_usage_rate > 50:
+                recommendations.append("⚠️ High promo code usage — evaluate the impact on profitability and consider limits per customer.")
+
+            if len(non_converted_df) > 0:
+                recommendations.append("📞 Trigger follow-up communication for non-converted customers (email/SMS/WhatsApp).")
+
+            if "D" in non_converted_df["Segment"].value_counts():
+                recommendations.append("📉 Customers in Segment D may require tailored low-basket incentives or education on higher value benefits.")
+
+            if "A" in target_df["Segment"].value_counts():
+                recommendations.append("🏆 Segment A customers responded well — consider loyalty or subscription program promotion.")
+
+            for rec in recommendations:
+                st.markdown(f"- {rec}")
 
     except Exception as e:
         st.error(f"❌ Error: {str(e)}")
