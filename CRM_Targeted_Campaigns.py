@@ -1,155 +1,108 @@
 import streamlit as st
 import pandas as pd
-import numpy as np
-import io
+import datetime
 import matplotlib.pyplot as plt
 
-st.set_page_config(page_title="CRM Targeted Campaigns", layout="wide")
+st.set_page_config(layout="wide")
+st.title("📊 CRM Targeted Campaigns Dashboard")
 
-st.title("📊 CRM Targeted Campaigns Tool")
+# --- Upload file ---
+uploaded_file = st.file_uploader("Upload customer data Excel file", type=["xlsx"])
+campaign_name = st.text_input("Enter Campaign Name (required before analysis)")
 
-uploaded_file = st.file_uploader("Upload Campaign Excel File", type=["xlsx"])
-
-campaign_name = st.text_input("Enter Campaign Name (required):")
-
-if uploaded_file and campaign_name.strip():
+if uploaded_file and campaign_name:
     df = pd.read_excel(uploaded_file)
 
-    # Convert dates
-    df['Last_Order_Date'] = pd.to_datetime(df['Last_Order_Date'], errors='coerce')
-    df['Campaign_Start_Date'] = pd.to_datetime(df['Campaign_Start_Date'], errors='coerce')
-    df['Campaign_End_Date'] = pd.to_datetime(df['Campaign_End_Date'], errors='coerce')
+    # --- Data Cleaning ---
+    df.columns = df.columns.str.strip()
+    df["Campaign_Name"] = campaign_name
+    df["Last_Order_Date"] = pd.to_datetime(df["Last_Order_Date"], errors='coerce')
+    df["Campaign_Date"] = pd.to_datetime(df["Campaign_Date"], errors='coerce')
+    df["Days_Since_Last_Order"] = (df["Campaign_Date"] - df["Last_Order_Date"]).dt.days
 
-    # Determine segment
-    def assign_segment(value):
-        if value >= 1500:
-            return "Segment A"
-        elif 1000 <= value < 1500:
-            return "Segment B"
-        elif 500 <= value < 1000:
-            return "Segment C"
-        else:
-            return "Segment D"
-
-    df["Segment"] = df["Last_Order_Value"].apply(assign_segment)
-
-    # Flag conversions
-    df["Converted"] = df["Last_Order_Date"] > df["Campaign_Start_Date"]
-
-    # Targeted customers = all uploaded
-    total_targeted = len(df)
-    total_converted = df["Converted"].sum()
-total_used_promo = df["Used_Promo_Code"].fillna("").astype(str).str.lower().eq("yes").sum()
+    # --- Define conversion ---
+    df["Is_Converted"] = df["Days_Since_Last_Order"] <= 7
+    if "Used_Promo_Code" in df.columns:
+        df["Used_Promo_Code"] = df["Used_Promo_Code"].astype(str)
+        df["Used_Promo_Code"] = df["Used_Promo_Code"].str.lower().eq("yes")
+    else:
+        df["Used_Promo_Code"] = False
 
     st.subheader("📈 Campaign Summary")
-    col1, col2, col3 = st.columns(3)
-    col1.metric("🎯 Total Targeted", total_targeted)
-    col2.metric("✅ Converted Customers", total_converted)
-    col3.metric("🏷️ Used Promo Code", total_used_promo)
+    total_targeted = len(df)
+    total_converted = df["Is_Converted"].sum()
+    total_used_promo = df["Used_Promo_Code"].sum()
 
-    # Summary chart
+    col1, col2, col3 = st.columns(3)
+    col1.metric("Total Targeted Customers", total_targeted)
+    col2.metric("Converted Customers", total_converted)
+    col3.metric("Used Promo Code", total_used_promo)
+
+    # --- Chart ---
     summary_data = pd.DataFrame({
-        "Status": ["Targeted", "Converted", "Used Promo"],
-        "Count": [total_targeted, total_converted, total_used_promo]
+        'Status': ['Targeted', 'Converted', 'Used Promo'],
+        'Count': [total_targeted, total_converted, total_used_promo]
     })
 
     fig, ax = plt.subplots()
-    ax.bar(summary_data["Status"], summary_data["Count"])
+    ax.bar(summary_data['Status'], summary_data['Count'])
     ax.set_ylabel("Number of Customers")
-    ax.set_title("Campaign Conversion Funnel")
+    ax.set_title("Campaign Performance Overview")
     st.pyplot(fig)
 
-    # --- TARGETED CUSTOMERS ---
-    df["Recommended_Target_Basket"] = df["Segment"].map({
-        "Segment A": 1800,
-        "Segment B": 1300,
-        "Segment C": 800,
-        "Segment D": 400
-    })
+    # --- Segment-based breakdown ---
+    st.subheader("📍 Segment Performance")
+    segment_summary = df.groupby("Segment")["Is_Converted"].mean().reset_index()
+    segment_summary.columns = ["Segment", "Conversion Rate"]
+    st.dataframe(segment_summary)
 
-    df["Campaign_Name"] = campaign_name
+    # --- Export buttons ---
+    targeted_df = df[df["Is_Converted"]]
+    non_converted_df = df[~df["Is_Converted"]]
 
-    target_df = df[df["Converted"]]
-    non_converted_df = df[~df["Converted"]]
+    st.download_button("⬇️ Download Converted Customers", data=targeted_df.to_excel(index=False), file_name="converted_customers.xlsx")
+    st.download_button("⬇️ Download Non-Converted Customers", data=non_converted_df.to_excel(index=False), file_name="non_converted_customers.xlsx")
 
-    st.subheader("✅ Converted Customers")
-    st.dataframe(target_df[[
-        "Customer_ID", "Store", "Segment", "Recommended_Target_Basket",
-        "Campaign_Name", "Notes"
-    ]])
-
-    st.download_button(
-        "⬇️ Export Converted Customers",
-        data=target_df.to_excel(index=False, engine="openpyxl"),
-        file_name=f"{campaign_name}_Converted_Customers.xlsx"
-    )
-
-    st.subheader("❌ Non-Converted Customers")
-    st.dataframe(non_converted_df[[
-        "Customer_ID", "Store", "Segment", "Recommended_Target_Basket",
-        "Campaign_Name", "Notes"
-    ]])
-
-    st.download_button(
-        "⬇️ Export Non-Converted Customers",
-        data=non_converted_df.to_excel(index=False, engine="openpyxl"),
-        file_name=f"{campaign_name}_Non_Converted_Customers.xlsx"
-    )
-
-    # --- RECOMMENDATIONS SECTION WITH PRIORITY INPUT ---
-    st.subheader("🔍 Recommendations for Next Round")
-
-    churn_target = 0.25  # 25% recovery goal
-
-    # Step 1: Ask user to assign priority levels for each store
-    st.markdown("### 🏪 Store Prioritization")
-    store_list = sorted(non_converted_df["Store"].dropna().unique())
+    # --- Store Priority Input ---
+    st.subheader("🏪 Store Priorities for Next Round")
+    unique_stores = df["Store"].dropna().unique()
     store_priorities = {}
+    for store in unique_stores:
+        priority = st.selectbox(f"Set priority for {store}", options=[1, 2, 3], key=store)
+        store_priorities[store] = priority
 
-    for store in store_list:
-        store_priorities[store] = st.selectbox(
-            f"Set priority for store: {store}",
-            options=[1, 2, 3],
-            index=0,
-            key=f"priority_{store}"
-        )
+    # --- Smart Recommendation Section ---
+    st.subheader("🔮 Next Step Recommendations")
+    churn_target = 0.25  # 25% recovery goal
+    expected_recoveries = int(total_targeted * churn_target)
+    st.write(f"🎯 To reach 25% churn recovery, you need to convert at least **{expected_recoveries}** customers.")
 
-    # Step 2: Assign promo values by segment
-    promo_values = {
-        "Segment A": 200,
-        "Segment B": 150,
-        "Segment C": 100,
-        "Segment D": 75
-    }
-
-    # Step 3: Calculate required conversions
-    required_recovery_count = int(np.ceil(total_targeted * churn_target))
-    gap = required_recovery_count - total_converted
-    st.markdown(f"📉 To hit **25% churn recovery**, you need **{required_recovery_count}** total conversions.")
-    st.markdown(f"📌 You still need **{gap} more conversions** from non-converted customers.")
-
-    # Step 4: Suggest customers from prioritized stores
     non_converted_df["Priority"] = non_converted_df["Store"].map(store_priorities)
-    prioritized_df = non_converted_df.sort_values(by=["Priority", "Segment"])
 
-    # Add promo and forecasted basket
-    prioritized_df["Recommended_Promo"] = prioritized_df["Segment"].map(promo_values)
-    prioritized_df["Forecasted_Basket_Value"] = prioritized_df["Recommended_Target_Basket"] + prioritized_df["Recommended_Promo"]
+    # Suggest customers from high-priority stores
+    prioritized_customers = non_converted_df.sort_values(by=["Priority", "Last_Order_Value"], ascending=[True, False])
+    prioritized_customers = prioritized_customers.head(expected_recoveries)
 
-    # Select top N to close the gap
-    next_round_df = prioritized_df.head(gap)
+    # Estimate recommended promo value
+    def recommend_promo(row):
+        if row["Segment"] == "Segment A":
+            return 100
+        elif row["Segment"] == "Segment B":
+            return 75
+        elif row["Segment"] == "Segment C":
+            return 50
+        else:
+            return 25
 
-    st.markdown("### 🎯 Recommended Customers for Next Round")
-    st.dataframe(next_round_df[[
-        "Customer_ID", "Store", "Segment", "Priority", "Recommended_Target_Basket",
-        "Recommended_Promo", "Forecasted_Basket_Value", "Notes"
+    prioritized_customers["Recommended_Promo"] = prioritized_customers.apply(recommend_promo, axis=1)
+    prioritized_customers["Forecasted_Basket"] = prioritized_customers["Last_Order_Value"] + prioritized_customers["Recommended_Promo"]
+
+    st.write("✅ Recommended Customers for Next Round")
+    st.dataframe(prioritized_customers[[
+        "Customer_ID", "Store", "Segment", "Last_Order_Value", "Recommended_Promo", "Forecasted_Basket"
     ]])
 
-    st.download_button(
-        "⬇️ Download Next Round Target List",
-        data=next_round_df.to_excel(index=False, engine="openpyxl"),
-        file_name=f"{campaign_name}_Next_Round_Targets.xlsx"
-    )
+    st.download_button("⬇️ Download Next Round Customer List", data=prioritized_customers.to_excel(index=False), file_name="next_round_customers.xlsx")
+
 else:
-    if uploaded_file and not campaign_name.strip():
-        st.warning("⚠️ Please enter a campaign name before proceeding.")
+    st.warning("📥 Please upload a file and enter a campaign name to continue.")
