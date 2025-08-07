@@ -7,7 +7,7 @@ st.set_page_config(page_title="Churn Campaign Tool", layout="wide")
 st.title("📉 CRM Churn Campaign Management Dashboard")
 st.write("Goal: Reduce churn rate to 25% by identifying and targeting low-activity segments.")
 
-st.sidebar.header("📤 Upload Churn Campaign Excel File")
+st.sidebar.header("📄 Upload Churn Campaign Excel File")
 uploaded_file = st.sidebar.file_uploader("Upload your Excel file", type=["xlsx"])
 
 # Define segment logic
@@ -29,6 +29,14 @@ def suggest_promo(segment):
         "D": "EGP 150"
     }[segment]
 
+def target_basket_value_cap(segment):
+    return {
+        "A": 1800,
+        "B": 1400,
+        "C": 900,
+        "D": 600
+    }[segment]
+
 if uploaded_file:
     try:
         df = pd.read_excel(uploaded_file)
@@ -43,18 +51,19 @@ if uploaded_file:
         else:
             df["Segment"] = df["Last_Order_Value"].apply(assign_segment)
             df["Promo_Suggestion"] = df["Segment"].apply(suggest_promo)
+            df["Target_Basket_Value"] = df["Segment"].apply(target_basket_value_cap)
 
-            st.subheader("📊 Full Campaign Data with Calculated Segment & Promo Suggestion")
+            st.subheader("📊 Full Campaign Data with Calculated Segment, Promo Suggestion & Target Basket Value")
             st.dataframe(df)
 
-            # Filter & summarize by store and segment
+            # Recommended Targeting Summary
             st.subheader("🏬 Recommended Targeting Summary by Store & Segment")
-
             grouped = (
                 df.groupby(["Store", "Segment"])
                 .agg(
                     Customers=("Customer_ID", "count"),
-                    Avg_Last_Order_Value=("Last_Order_Value", "mean")
+                    Avg_Last_Order_Value=("Last_Order_Value", "mean"),
+                    Total_Last_Order_Value=("Last_Order_Value", "sum")
                 )
                 .reset_index()
                 .sort_values(by=["Store", "Segment"])
@@ -62,7 +71,25 @@ if uploaded_file:
 
             st.dataframe(grouped)
 
-            st.success("✅ Analysis complete. Use this data to launch targeted campaigns.")
+            # Prioritized Targeting List
+            st.subheader("⬆️ Prioritized Targeting by Store Based on High Basket Potential")
+            prioritized = (
+                df.groupby("Store")
+                .agg(
+                    Total_Customers=("Customer_ID", "count"),
+                    Avg_Basket_Value=("Last_Order_Value", "mean"),
+                    Total_Potential_Revenue=("Target_Basket_Value", "sum")
+                )
+                .reset_index()
+                .sort_values(by="Avg_Basket_Value", ascending=False)
+            )
+
+            prioritized["Estimated_Recovery_Success_%"] = prioritized["Avg_Basket_Value"].apply(lambda x: min(95, max(50, round(x / 20))))
+            prioritized["Orders_Recovery_Potential_%"] = ((prioritized["Total_Potential_Revenue"] - prioritized["Avg_Basket_Value"] * prioritized["Total_Customers"]) / (prioritized["Avg_Basket_Value"] * prioritized["Total_Customers"])) * 100
+
+            st.dataframe(prioritized)
+
+            st.success("✅ Targeting insights generated. Use them to prioritize and optimize campaign execution.")
 
     except Exception as e:
         st.error(f"❌ Error reading file: {e}")
