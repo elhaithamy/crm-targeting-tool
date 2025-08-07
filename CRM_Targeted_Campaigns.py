@@ -18,6 +18,20 @@ uploaded_file = st.file_uploader("📤 Upload Campaign Input Excel File", type=[
 if uploaded_file:
     df = pd.read_excel(uploaded_file)
 
+    # Standardize column names (remove leading/trailing spaces, handle case sensitivity)
+    df.columns = df.columns.str.strip()
+
+    expected_columns = [
+        "Customer_ID", "Campaign_Name", "Store", "Campaign_Start_Date",
+        "Campaign_End_Date", "Last_Order_Date", "Last_Order_Value",
+        "Used_Promo_Code", "Notes"
+    ]
+
+    missing_cols = [col for col in expected_columns if col not in df.columns]
+    if missing_cols:
+        st.error(f"❌ Missing required columns: {missing_cols}")
+        st.stop()
+
     # Convert dates
     df["Campaign_Start_Date"] = pd.to_datetime(df["Campaign_Start_Date"])
     df["Campaign_End_Date"] = pd.to_datetime(df["Campaign_End_Date"])
@@ -54,31 +68,28 @@ if uploaded_file:
 
     df["Converted"] = df.apply(is_converted, axis=1)
 
-    # Count orders per customer during campaign
-    df["Orders_Count_During_Campaign"] = df.apply(
-        lambda row: 1 if row["Converted"] else 0, axis=1
-    )
+    # Count orders during campaign (set to 1 if converted, you can enhance this logic later)
+    df["Orders_Count_During_Campaign"] = df["Converted"].apply(lambda x: 1 if x else 0)
 
-    # Targeted customers (all customers in this campaign)
     targeted_df = df.copy()
-
-    # Non-converted customers
     non_converted_df = df[~df["Converted"]].copy()
 
     st.subheader("🎯 Non-Converted Customers")
-    st.dataframe(non_converted_df[[
-        "Customer_ID", "Store", "Segment", "Recommended_Target_Basket",
-        "Campaign_Name", "Notes"
-    ]])
+    preview_cols = [
+        col for col in ["Customer_ID", "Store", "Segment", "Recommended_Target_Basket",
+                        "Campaign_Name", "Notes"]
+        if col in non_converted_df.columns
+    ]
+    st.dataframe(non_converted_df[preview_cols])
 
     st.subheader("📊 Conversion & Promo Usage Summary")
     summary = df.groupby("Converted").agg({
         "Customer_ID": "count",
-        "Used_Promo_Code": "sum"
+        "Used_Promo_Code": lambda x: x.fillna(False).sum()
     }).rename(columns={"Customer_ID": "Customer Count", "Used_Promo_Code": "Promo Code Used"})
     st.dataframe(summary)
 
-    # Helper function to create Excel download
+    # Download helpers
     def convert_df_to_excel(df):
         output = BytesIO()
         with pd.ExcelWriter(output, engine='openpyxl') as writer:
