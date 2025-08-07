@@ -110,3 +110,38 @@ if uploaded_file:
         file_name=f"{campaign_name_input}_Non_Converted_Customers.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     )
+
+import matplotlib.pyplot as plt
+
+# Chart Data Preparation
+total_targeted = len(df)
+total_converted = df["Converted"].sum()
+promo_code_used = df["Used_Promo_Code"].fillna(False).sum()
+
+chart_labels = ["Targeted", "Converted", "Promo Used"]
+chart_values = [
+    total_targeted,
+    total_converted,
+    promo_code_used
+]
+
+# Convert to percentages
+percentages = [round((v / total_targeted) * 100, 1) for v in chart_values]
+
+# Plotting
+fig, ax = plt.subplots()
+bars = ax.bar(chart_labels, percentages)
+
+# Add % labels on top of each bar
+for bar, pct in zip(bars, percentages):
+    height = bar.get_height()
+    ax.annotate(f"{pct}%", xy=(bar.get_x() + bar.get_width() / 2, height),
+                xytext=(0, 5), textcoords="offset points",
+                ha='center', va='bottom')
+
+ax.set_ylim(0, 100)
+ax.set_ylabel("Percentage")
+ax.set_title("🎯 Campaign Performance Metrics (%)")
+
+st.pyplot(fig)
+
