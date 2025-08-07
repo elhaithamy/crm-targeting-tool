@@ -39,7 +39,7 @@ if uploaded_file and campaign_name.strip():
     # Targeted customers = all uploaded
     total_targeted = len(df)
     total_converted = df["Converted"].sum()
-    total_used_promo = df["Used_Promo_Code"].str.lower().eq("yes").sum()
+total_used_promo = df["Used_Promo_Code"].fillna("").astype(str).str.lower().eq("yes").sum()
 
     st.subheader("📈 Campaign Summary")
     col1, col2, col3 = st.columns(3)
