@@ -1,79 +1,70 @@
 import streamlit as st
 import pandas as pd
-import datetime
+from datetime import datetime
 
-st.set_page_config(page_title="Churn Campaign Targeting Tool", layout="wide")
-st.title("📊 Churn Campaign Targeting Dashboard")
+st.set_page_config(page_title="Churn Campaign Tool", layout="wide")
 
-st.markdown("""
-Upload your Excel file containing the churn campaign customer list. 
+st.title("📉 CRM Churn Campaign Management Dashboard")
+st.write("Goal: Reduce churn rate to 25% by identifying and targeting low-activity segments.")
 
-**Expected Columns:**
-- `Customer_ID`
-- `Campaign_Name`
-- `Segment`
-- `Store`
-- `Campaign_Date`
-- `Last_Order_Date`
-- `Last_Order_Value`
-- `Notes`
+st.sidebar.header("📤 Upload Churn Campaign Excel File")
+uploaded_file = st.sidebar.file_uploader("Upload your Excel file", type=["xlsx"])
 
-The tool will analyze which customers/stores need re-engagement based on the **Last_Order_Value** and **Last_Order_Date**, and recommend suitable **promo code values** to increase basket size.
-""")
+# Define segment logic
+def assign_segment(order_value):
+    if order_value >= 1500:
+        return "A"
+    elif order_value >= 1000:
+        return "B"
+    elif order_value >= 500:
+        return "C"
+    else:
+        return "D"
 
-# Upload file
-uploaded_file = st.file_uploader("📤 Upload Churn Campaign Excel File", type=["xlsx"])
+def suggest_promo(segment):
+    return {
+        "A": "EGP 50",
+        "B": "EGP 75",
+        "C": "EGP 100",
+        "D": "EGP 150"
+    }[segment]
 
 if uploaded_file:
-    df = pd.read_excel(uploaded_file)
+    try:
+        df = pd.read_excel(uploaded_file)
 
-    # Convert dates
-    df['Last_Order_Date'] = pd.to_datetime(df['Last_Order_Date'])
-    df['Campaign_Date'] = pd.to_datetime(df['Campaign_Date'])
-    df['Days_Since_Last_Order'] = (pd.Timestamp.today() - df['Last_Order_Date']).dt.days
+        required_columns = [
+            "Customer_ID", "Campaign_Name", "Store",
+            "Campaign_Date", "Last_Order_Date", "Last_Order_Value", "Notes"
+        ]
 
-    # Define segments based on Last_Order_Value
-    def define_segment(value):
-        if value >= 1500:
-            return "A"
-        elif 1000 <= value < 1500:
-            return "B"
-        elif 500 <= value < 1000:
-            return "C"
+        if not all(col in df.columns for col in required_columns):
+            st.error(f"❌ Missing columns. Expected columns: {', '.join(required_columns)}")
         else:
-            return "D"
+            df["Segment"] = df["Last_Order_Value"].apply(assign_segment)
+            df["Promo_Suggestion"] = df["Segment"].apply(suggest_promo)
 
-    df['Calculated_Segment'] = df['Last_Order_Value'].apply(define_segment)
+            st.subheader("📊 Full Campaign Data with Calculated Segment & Promo Suggestion")
+            st.dataframe(df)
 
-    # Promo suggestions
-    def suggest_promo(segment):
-        if segment == "A":
-            return "EGP 0–50 Loyalty Reward"
-        elif segment == "B":
-            return "EGP 75–100 Upgrade Bonus"
-        elif segment == "C":
-            return "EGP 100–150 Recovery Push"
-        else:
-            return "EGP 150–200+ Resurrection Promo"
+            # Filter & summarize by store and segment
+            st.subheader("🏬 Recommended Targeting Summary by Store & Segment")
 
-    df['Suggested_Promo'] = df['Calculated_Segment'].apply(suggest_promo)
+            grouped = (
+                df.groupby(["Store", "Segment"])
+                .agg(
+                    Customers=("Customer_ID", "count"),
+                    Avg_Last_Order_Value=("Last_Order_Value", "mean")
+                )
+                .reset_index()
+                .sort_values(by=["Store", "Segment"])
+            )
 
-    # Prioritize re-targeting
-    df['Targeting_Priority'] = df.apply(lambda row: '🎯 High' if row['Calculated_Segment'] in ['C', 'D'] and row['Days_Since_Last_Order'] > 30 else 'Normal', axis=1)
+            st.dataframe(grouped)
 
-    st.success("✅ Analysis Complete")
+            st.success("✅ Analysis complete. Use this data to launch targeted campaigns.")
 
-    with st.expander("📋 View Full Processed Data"):
-        st.dataframe(df)
-
-    with st.expander("🏪 Targeting Summary by Store"):
-        summary = df[df['Targeting_Priority'] == '🎯 High'].groupby(['Store', 'Calculated_Segment']).agg({
-            'Customer_ID': 'count'
-        }).rename(columns={'Customer_ID': 'Target_Customers'}).reset_index()
-        st.dataframe(summary)
-
-    with st.expander("⬇️ Download Processed Report"):
-        st.download_button("Download Excel", df.to_excel(index=False), file_name="Churn_Targeting_Results.xlsx")
-
+    except Exception as e:
+        st.error(f"❌ Error reading file: {e}")
 else:
-    st.info("👆 Please upload a valid Excel sheet to begin.")
+    st.info("📄 Please upload an Excel file with the required columns to get started.")
