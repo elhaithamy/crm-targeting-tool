@@ -1,97 +1,93 @@
 import streamlit as st
 import pandas as pd
-from datetime import datetime
+from io import BytesIO
+import datetime
 
-st.set_page_config(page_title="Churn Campaign Tool", layout="wide")
+st.set_page_config(page_title="CRM Churn Campaign Planner", layout="wide")
 
-st.title("📉 CRM Churn Campaign Management Dashboard")
-st.write("Goal: Reduce churn rate to 25% by identifying and targeting low-activity segments.")
+st.title("📊 CRM Campaign Targeting Dashboard")
 
-st.sidebar.header("📄 Upload Churn Campaign Excel File")
-uploaded_file = st.sidebar.file_uploader("Upload your Excel file", type=["xlsx"])
+uploaded_file = st.file_uploader("📤 Upload Churn Campaign Excel File", type=["xlsx"])
+campaign_history = st.session_state.get("campaign_history", [])
 
-# Define segment logic
-def assign_segment(order_value):
-    if order_value >= 1500:
-        return "A"
-    elif order_value >= 1000:
-        return "B"
-    elif order_value >= 500:
-        return "C"
-    else:
-        return "D"
+SEGMENT_TIERS = {
+    "A": 1500,
+    "B": 1000,
+    "C": 500,
+    "D": 0
+}
 
-def suggest_promo(segment):
+def calculate_segment(value):
+    for seg, threshold in SEGMENT_TIERS.items():
+        if value >= threshold:
+            return seg
+    return "D"
+
+def suggested_promo(seg):
     return {
-        "A": "EGP 50",
-        "B": "EGP 75",
-        "C": "EGP 100",
-        "D": "EGP 150"
-    }[segment]
+        "A": "No Promo",
+        "B": "EGP 100",
+        "C": "EGP 150",
+        "D": "EGP 200"
+    }.get(seg, "EGP 200")
 
-def target_basket_value_cap(segment):
+def basket_cap(seg):
     return {
         "A": 1800,
-        "B": 1400,
-        "C": 900,
-        "D": 600
-    }[segment]
+        "B": 1500,
+        "C": 1000,
+        "D": 500
+    }.get(seg, 500)
 
 if uploaded_file:
-    try:
-        df = pd.read_excel(uploaded_file)
+    df = pd.read_excel(uploaded_file)
+    df["Segment"] = df["Last_Order_Value"].apply(calculate_segment)
+    df["Suggested_Promo"] = df["Segment"].apply(suggested_promo)
+    df["Target_Basket_Cap"] = df["Segment"].apply(basket_cap)
 
-        required_columns = [
-            "Customer_ID", "Campaign_Name", "Store",
-            "Campaign_Date", "Last_Order_Date", "Last_Order_Value", "Notes"
-        ]
+    st.subheader("📋 Full Campaign Data with Segment & Promo Suggestions")
+    st.dataframe(df)
 
-        if not all(col in df.columns for col in required_columns):
-            st.error(f"❌ Missing columns. Expected columns: {', '.join(required_columns)}")
-        else:
-            df["Segment"] = df["Last_Order_Value"].apply(assign_segment)
-            df["Promo_Suggestion"] = df["Segment"].apply(suggest_promo)
-            df["Target_Basket_Value"] = df["Segment"].apply(target_basket_value_cap)
+    target_customers = df[df["Last_Order_Date"] < pd.to_datetime("today") - pd.to_timedelta("60d")]
 
-            st.subheader("📊 Full Campaign Data with Calculated Segment, Promo Suggestion & Target Basket Value")
-            st.dataframe(df)
+    st.subheader("🎯 Recommended Targeting Summary by Store & Segment")
 
-            # Recommended Targeting Summary
-            st.subheader("🏬 Recommended Targeting Summary by Store & Segment")
-            grouped = (
-                df.groupby(["Store", "Segment"])
-                .agg(
-                    Customers=("Customer_ID", "count"),
-                    Avg_Last_Order_Value=("Last_Order_Value", "mean"),
-                    Total_Last_Order_Value=("Last_Order_Value", "sum")
-                )
-                .reset_index()
-                .sort_values(by=["Store", "Segment"])
-            )
+    summary = (
+        target_customers.groupby(["Store", "Segment"])
+        .size()
+        .reset_index(name="Customers_To_Target")
+        .sort_values(by=["Segment", "Customers_To_Target"], ascending=[True, False])
+    )
 
-            st.dataframe(grouped)
+    # Estimate order increase (fake logic here - adjust to match real uplift data)
+    orders_increase = (
+        target_customers.groupby("Store")
+        .size()
+        .reset_index(name="Targetable_Customers")
+    )
+    orders_increase["Est_Order_Increase_%"] = orders_increase["Targetable_Customers"] * 2  # simple placeholder
 
-            # Prioritized Targeting List
-            st.subheader("⬆️ Prioritized Targeting by Store Based on High Basket Potential")
-            prioritized = (
-                df.groupby("Store")
-                .agg(
-                    Total_Customers=("Customer_ID", "count"),
-                    Avg_Basket_Value=("Last_Order_Value", "mean"),
-                    Total_Potential_Revenue=("Target_Basket_Value", "sum")
-                )
-                .reset_index()
-                .sort_values(by="Avg_Basket_Value", ascending=False)
-            )
+    st.dataframe(summary)
+    st.subheader("📈 Estimated Order Impact by Store")
+    st.dataframe(orders_increase)
 
-            prioritized["Estimated_Recovery_Success_%"] = prioritized["Avg_Basket_Value"].apply(lambda x: min(95, max(50, round(x / 20))))
-            prioritized["Orders_Recovery_Potential_%"] = ((prioritized["Total_Potential_Revenue"] - prioritized["Avg_Basket_Value"] * prioritized["Total_Customers"]) / (prioritized["Avg_Basket_Value"] * prioritized["Total_Customers"])) * 100
+    st.subheader("📤 Download Target Customer List")
+    to_download = target_customers[[
+        "Customer_ID", "Store", "Last_Order_Date", "Last_Order_Value", "Segment", "Suggested_Promo", "Target_Basket_Cap"
+    ]]
+    buffer = BytesIO()
+    to_download.to_excel(buffer, index=False)
+    st.download_button("📥 Download Excel for CRM Team", data=buffer.getvalue(),
+                       file_name="Target_Customers_List.xlsx")
 
-            st.dataframe(prioritized)
+    # Update campaign history
+    if st.button("✅ Update Campaign History"):
+        df["Campaign_Updated_At"] = datetime.datetime.now()
+        campaign_history.append(df)
+        st.session_state["campaign_history"] = campaign_history
+        st.success("Campaign history updated!")
 
-            st.success("✅ Targeting insights generated. Use them to prioritize and optimize campaign execution.")
-
-    except Exception as e:
-        st.error(f"❌ Error reading file: {e}")
-else:
-    st.info("📄 Please upload an Excel file with the required columns to get started.")
+    if campaign_history:
+        st.subheader("🕘 Campaign History")
+        history_df = pd.concat(campaign_history)
+        st.dataframe(history_df)
